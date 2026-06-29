@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+#
+# gh-bundle — fast first-look triage for a GitHub Enterprise Server support bundle.
+#
+# Most people open a GHES support bundle and grep raw text for the word "error".
+# That misses the failures that actually take an appliance down: resource
+# starvation (disk/RAM/IOPS), the orchestration layer OOM-killing a service, a
+# failed Consul service, or GitHub Connect / Dependabot advisory sync dying on a
+# corporate SSL-inspection proxy. This extension reads the *right* files and
+# surfaces those signals in one pass, before you start theorising.
+#
+# It is intentionally read-only and defensive: it never assumes a file exists,
+# degrades gracefully when a section is missing, and labels every estimate as an
+# estimate. Verify any flagged value against the named source file before you
+# put it in front of a customer.
+#
+# Usage:
+#   gh bundle <path-to-bundle.tgz | path-to-extracted-dir> [--threshold N] [--keep]
+#
+# Options:
+#   --threshold N   Percent at/above which disk and memory are flagged. Default 85.
+#   --keep          Keep the temp extraction dir and print its path (default: clean up).
+#   -h, --help      Show this help.
+#
+set -uo pipefail
+
+THRESHOLD=85
+KEEP=0
+SRC=""
+WORKDIR=""
+
+die() { printf 'gh-bundle: %s\n' "$1" >&2; exit 1; }
+
+usage() {
+  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+}
+
+# ---- arg parsing ----------------------------------------------------------
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage ;;
+    --threshold) shift; THRESHOLD="${1:-85}" ;;
+    --threshold=*) THRESHOLD="${1#*=}" ;;
+    --keep) KEEP=1 ;;
+    -*) die "unknown option: $1 (try --help)" ;;
+    *) SRC="$1" ;;
+  esac
+  shift
+done
+
+[ -n "$SRC" ] || die "no bundle given. Usage: gh bundle <bundle.tgz|dir> [--threshold N]"
+[ -e "$SRC" ] || die "path not found: $SRC"
+case "$THRESHOLD" in ''|*[!0-9]*) die "--threshold must be a number" ;; esac
+
+cleanup() { [ "$KEEP" -eq 0 ] && [ -n "$WORKDIR" ] && rm -rf "$WORKDIR"; }
+trap cleanup EXIT
+
+# ---- extract --------------------------------------------------------------
+if [ -d "$SRC" ]; then
+  ROOT="$SRC"
+else
+  WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/gh-bundle.XXXXXX")" || die "mktemp failed"
+  printf 'Extracting %s ...\n' "$SRC" >&2
+  tar -xzf "$SRC" -C "$WORKDIR" 2>/dev/null || tar -xf "$SRC" -C "$WORKDIR" 2>/dev/null \
+    || die "could not extract $SRC (not a tar/tgz?)"
+  ROOT="$WORKDIR"
+  # Bundles often expand into a single top-level dir; descend into it.
+  inner="$(find "$WORKDIR" -mindepth 1 -maxdepth 1 -type d | head -1)"
+  if [ -n "$inner" ] && [ ! -e "$WORKDIR/metadata" ] && [ ! -e "$WORKDIR/cluster_status.json" ]; then
+    [ -e "$inner/metadata" ] || [ -e "$inner/cluster_status.json" ] && ROOT="$inner"
+  fi
+  [ "$KEEP" -eq 1 ] && printf 'Extracted to: %s\n' "$WORKDIR" >&2
+fi
+
+# ---- helpers --------------------------------------------------------------
+hr()    { printf '%s\n' "------------------------------------------------------------"; }
+flag()  { printf '  [FLAG] %s\n' "$1"; FLAGS=$((FLAGS+1)); }
+ok()    { printf '  [ok]   %s\n' "$1"; }
+note()  { printf '  [note] %s\n' "$1"; }
+FLAGS=0
+
+# Find a file under a node root, return first match or empty.
+find1() { [ -e "$1/$2" ] && printf '%s/%s' "$1" "$2"; }
+
+# ---- topology detection ---------------------------------------------------
+declare -a NODES
+if [ -e "$ROOT/cluster_status.json" ] && [ ! -d "$ROOT/metadata" ]; then
+  TOPOLOGY="multi-node / cluster"
+  while IFS= read -r d; do
+    [ -d "$d/metadata" ] && NODES+=("$d")
+  done < <(find "$ROOT" -mindepth 1 -maxdepth 1 -type d | sort)
+  [ "${#NODES[@]}" -gt 0 ] || NODES=("$ROOT")
+else
+  TOPOLOGY="single-node"
+  NODES=("$ROOT")
+fi
+
+echo
+hr
+echo "GHES support bundle first-look   (threshold ${THRESHOLD}%)"
+echo "Root:     $ROOT"
+echo "Topology: $TOPOLOGY  (${#NODES[@]} node(s))"
+hr
+
+# ---- per-node analysis ----------------------------------------------------
+for NODE in "${NODES[@]}"; do
+  label="$(basename "$NODE")"
+  [ "$TOPOLOGY" = "single-node" ] && label="(single node)"
+  echo
+  echo "### Node: $label"
+
+  diag="$(find1 "$NODE" metadata/diagnostics.txt)"
+  sysjson="$(find1 "$NODE" metadata/system.json)"
+
+  # --- RELEASE / hostname context (best-effort) ---
+  if [ -n "$diag" ]; then
+    rel="$(grep -iE 'GitHub Enterprise Server [0-9]' "$diag" | head -1 | sed 's/^[[:space:]]*//')"
+    [ -n "$rel" ] && note "release: $rel"
+  fi
+
+  # --- DISK: df rows with a usage percent ---
+  if [ -n "$diag" ]; then
+    # Match df rows: a NN% column followed by a mount point starting with /
+    disk_hits="$(grep -hE '[0-9]+%[[:space:]]+/' "$diag" 2>/dev/null \
+                  | awk -v t="$THRESHOLD" '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+%$/){p=$i; gsub("%","",p); if(p+0>=t) print $0}}' \
+                  | sort -u)"
+    if [ -n "$disk_hits" ]; then
+      while IFS= read -r line; do
+        [ -n "$line" ] && flag "disk >=${THRESHOLD}%: $(echo "$line" | sed 's/^[[:space:]]*//')"
+      done <<< "$disk_hits"
+    else
+      ok "no filesystem at/above ${THRESHOLD}% in diagnostics.txt df output"
+    fi
+  else
+    note "metadata/diagnostics.txt not found — cannot check disk"
+  fi
+
+  # --- MEMORY: free 'Mem:' line (estimate) + hard OOM evidence from kern.log ---
+  if [ -n "$diag" ]; then
+    memline="$(grep -E '^[[:space:]]*Mem:' "$diag" | head -1)"
+    if [ -n "$memline" ]; then
+      # classic free -m layout: Mem: total used free shared buff/cache available
+      tot="$(echo "$memline" | awk '{print $2}')"
+      avail="$(echo "$memline" | awk '{print $NF}')"
+      used="$(echo "$memline" | awk '{print $3}')"
+      if echo "$tot$avail" | grep -qE '^[0-9]+$' && [ "${tot:-0}" -gt 0 ]; then
+        # prefer (total-available)/total when available column looks sane
+        if echo "$avail" | grep -qE '^[0-9]+$' && [ "$avail" -le "$tot" ]; then
+          pct=$(( (tot - avail) * 100 / tot ))
+        else
+          pct=$(( used * 100 / tot ))
+        fi
+        if [ "$pct" -ge "$THRESHOLD" ]; then
+          flag "memory ~${pct}% used (estimate from free 'Mem:' line — confirm in MEMORY section)"
+        else
+          ok "memory ~${pct}% used (estimate)"
+        fi
+      else
+        note "found Mem: line but could not parse it — read MEMORY section manually"
+      fi
+    else
+      note "no 'Mem:' line in diagnostics.txt — read the MEMORY section manually"
+    fi
+  fi
+
+  # Unambiguous starvation signal: kernel OOM killer fired.
+  kern="$(find1 "$NODE" system-logs/kern.log)"
+  if [ -n "$kern" ]; then
+    oom="$(grep -icE 'out of memory|oom-kill|killed process' "$kern" 2>/dev/null)"
+    if [ "${oom:-0}" -gt 0 ]; then
+      flag "kernel OOM killer fired ${oom}x in system-logs/kern.log (memory starvation — the orchestrator/kernel killed a process)"
+      grep -iE 'killed process' "$kern" 2>/dev/null | tail -3 | sed 's/^/         /'
+    else
+      ok "no OOM-killer events in kern.log"
+    fi
+  fi
+
+  # --- LOAD vs CPU ---
+  if [ -n "$diag" ]; then
+    la="$(grep -iE 'load average' "$diag" | head -1)"
+    [ -n "$la" ] && note "load: $(echo "$la" | sed 's/^[[:space:]]*//')"
+  fi
+
+  # --- CONSUL service health (failed/critical services) ---
+  svc="$(find1 "$NODE" metadata/services_consul_status.json)"
+  if [ -n "$svc" ]; then
+    crit="$(grep -ioE '"(critical|warning|failing)"' "$svc" 2>/dev/null | wc -l | tr -d ' ')"
+    if [ "${crit:-0}" -gt 0 ]; then
+      flag "Consul reports ${crit} non-passing service check(s) in services_consul_status.json"
+    else
+      ok "no non-passing Consul service checks"
+    fi
+  fi
+
+  # --- DOCKER container OOM ---
+  if [ -d "$NODE/docker/container-logs" ]; then
+    doom="$(grep -rilE 'oomkilled|out of memory' "$NODE/docker/container-logs" 2>/dev/null | wc -l | tr -d ' ')"
+    [ "${doom:-0}" -gt 0 ] && flag "OOMKilled / OOM text in ${doom} docker container log(s)"
+  fi
+
+  # --- GITHUB CONNECT / PROXY / TLS (the air-gapped reality check) ---
+  exc="$(find1 "$NODE" github-logs/exceptions.log)"
+  prod="$(find1 "$NODE" github-logs/production.log)"
+  conn_files=""
+  [ -n "$exc" ]  && conn_files="$conn_files $exc"
+  [ -n "$prod" ] && conn_files="$conn_files $prod"
+  if [ -n "$conn_files" ]; then
+    conn="$(grep -hicE 'certificate verify failed|ssl_connect|self.signed certificate|proxy|github connect|could not connect to|getaddrinfo|connection refused|advisory' $conn_files 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+    if [ "${conn:-0}" -gt 0 ]; then
+      flag "${conn} connectivity/TLS/proxy/GitHub-Connect hit(s) in github-logs (air-gapped/proxy suspect — Dependabot advisory sync, Connect)"
+      note "  drill: grep -iE 'certificate verify failed|github connect|proxy' github-logs/exceptions.log"
+    else
+      ok "no obvious TLS/proxy/GitHub-Connect errors in github-logs"
+    fi
+  fi
+
+  # --- ghe-probe automated findings, if the bundle carried them ---
+  probe="$(find "$NODE/ghe-probe" -maxdepth 1 -name 'ghe-probe-*.md' 2>/dev/null | head -1)"
+  [ -n "$probe" ] && note "ghe-probe findings present: ${probe#$ROOT/}  (read this — automated analysis)"
+done
+
+# ---- verdict --------------------------------------------------------------
+echo
+hr
+if [ "$FLAGS" -eq 0 ]; then
+  echo "VERDICT: no resource-starvation, service-failure, or connectivity flags in the"
+  echo "         files checked. This is a first-look screen, not a clean bill of health —"
+  echo "         continue with metadata/diagnostics.txt and the symptom-specific logs."
+else
+  echo "VERDICT: ${FLAGS} flag(s) raised above. Treat resource starvation and failed"
+  echo "         services as the prime suspects before blaming the product (CodeQL,"
+  echo "         Dependabot, Actions rarely fail on their own — the appliance starves them)."
+  echo "         Confirm every flagged value in its named source file before quoting it."
+fi
+hr
+exit 0
