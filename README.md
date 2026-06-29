@@ -20,9 +20,15 @@ appliance underneath them, or cut off from GitHub.com by a corporate proxy.
 - **ghe-probe** automated findings, if the bundle carried them.
 
 It is **topology-aware** (handles single-node and multi-node/cluster bundles)
-and **defensive**: it never assumes a file exists, degrades gracefully when a
-section is missing, and labels every estimate as an estimate. It does not modify
-the bundle and makes no network calls.
+and **defensive**: it never assumes a file exists, one corrupt node never aborts
+the others, and it labels every estimate as an estimate. It does not modify the
+bundle and makes no network calls.
+
+**v2 adds:** selective extraction (only the handful of diagnostic files are
+unpacked, never the multi-GB git/Elasticsearch data), strictly-anchored OOM
+detection (won't false-positive on app logs that merely mention "out of
+memory"), bounded scanning of huge logs, `--json` output for Slack/ticket/CI
+hooks, severity color, and meaningful exit codes.
 
 > First-look screen, not a verdict. Every flag points at the source file it came
 > from. Confirm the value there before you put it in front of a customer.
@@ -59,8 +65,28 @@ Options:
 | Option         | Meaning |
 | -------------- | ------- |
 | `--threshold N`| Percent at/above which disk and memory are flagged. Default `85`. |
+| `--json`       | Emit structured JSON (for Slack/ticket/CI hooks). Disables color. |
 | `--keep`       | Keep the temp extraction dir and print its path. |
+| `--version`    | Print version and exit. |
 | `-h, --help`   | Show help. |
+
+## Exit codes
+
+So it composes into automated triage / CI pipelines:
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | No flags — clean first-look. |
+| `2`  | One or more flags raised (resource/service/connectivity). |
+| `1`  | Usage, extraction, or script error. |
+
+## JSON output
+
+`--json` emits a structured object: `topology`, `threshold_pct`, `flags`,
+`verdict`, `exit_code`, and `nodes[]` each with a `findings[]` array of
+`{severity, type, message, source}`. Pipe it straight into `jq`, a Slack/Teams
+alert, or a ticket automation. Color is automatically disabled (also when output
+is not a TTY, and when `NO_COLOR` is set).
 
 ## What it reads (and what it doesn't)
 
