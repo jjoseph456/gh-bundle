@@ -49,7 +49,7 @@ git clone https://github.com/jjoseph456/gh-bundle
 ## Usage
 
 ```
-gh bundle <path-to-bundle.tgz | path-to-extracted-dir> [--threshold N] [--keep]
+gh bundle <path-to-bundle.tgz | path-to-extracted-dir> [--threshold N] [--json] [--keep]
 ```
 
 Examples:
@@ -57,6 +57,7 @@ Examples:
 ```
 gh bundle ./support-bundle-2026-02-12.tar.gz
 gh bundle ./extracted-bundle --threshold 90
+gh bundle ./bundle.tgz --json        # structured output for automation
 gh bundle ./bundle.tgz --keep        # leave the temp extraction in place
 ```
 
