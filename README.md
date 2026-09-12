@@ -102,17 +102,15 @@ single-node, `<hostname>/metadata/...` for multi-node):
 - `github-logs/exceptions.log`, `github-logs/production.log` — TLS/proxy/Connect
 - `ghe-probe/ghe-probe-*.md` — automated findings (flagged for you to read)
 
-Bundle layout reference: the schema sampled across 7 bundles / 5 GHES versions /
-single-node + cluster lives in the team's `esb-data-explorer` schema cache
-(`bundle_filesystem_layout.json`, `key_investigation_files.json`).
+Bundle layout handling uses defensive path discovery for both single-node and
+multi-node archives. Missing or malformed diagnostic files are reported or
+skipped without preventing analysis of the remaining bundle.
 
 ## Why this exists
 
-It is the companion tool to the
-[`support-repros`](https://github.com/jjoseph456/support-repros) reproducer
-library. Reproducers prove *how* a thing breaks; this proves *whether the
-appliance was healthy enough to run it at all* — the question to answer before
-escalating a GHAS/Actions failure as a product bug.
+Product-level symptoms can originate in the appliance layer. This tool helps
+separate resource, service-health, and connectivity signals from the feature
+being investigated before an issue is escalated as a product defect.
 
 ## Limitations
 
