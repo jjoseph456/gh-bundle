@@ -1,6 +1,7 @@
 # gh-bundle
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/jjoseph456/gh-bundle/actions/workflows/test.yml/badge.svg)](https://github.com/jjoseph456/gh-bundle/actions/workflows/test.yml)
 
 A `gh` CLI extension that does a fast, read-only **first-look triage** of a
 GitHub Enterprise Server (GHES) support bundle.
@@ -122,3 +123,14 @@ being investigated before an issue is escalated as a product defect.
   questions, go to the diagnostics performance sections / Performance Lab.
 - It is a screen, not a diagnosis. It points you at the right file fast; it does
   not replace reading it.
+
+## Development
+
+Run the focused syntax and regression checks:
+
+```bash
+bash -n gh-bundle
+bash tests/test-gh-bundle.sh
+```
+
+For a security issue, use GitHub's private vulnerability reporting feature.
