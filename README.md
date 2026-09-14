@@ -36,6 +36,8 @@ hooks, severity color, and meaningful exit codes.
 > First-look screen, not a verdict. Every flag points at the source file it came
 > from. Confirm the value there before you put it in front of a customer.
 
+![Terminal preview of GHES bundle triage](assets/terminal-preview.svg)
+
 ## Install
 
 ```

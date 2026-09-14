@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="278" viewBox="0 0 900 278" role="img" aria-labelledby="title desc">
+  <title id="title">gh-bundle terminal output</title>
+  <desc id="desc">Synthetic GHES support-bundle triage output showing a disk finding.</desc>
+  <rect width="900" height="278" rx="12" fill="#0d1117"/>
+  <rect width="900" height="38" rx="12" fill="#161b22"/>
+  <circle cx="24" cy="19" r="6" fill="#ff5f57"/><circle cx="44" cy="19" r="6" fill="#febc2e"/><circle cx="64" cy="19" r="6" fill="#28c840"/>
+  <g font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" font-size="16">
+    <text x="24" y="70" fill="#8b949e">$ gh bundle ./support-bundle.tgz</text>
+    <text x="24" y="106" fill="#c9d1d9">### Node: (single node)</text>
+    <text x="24" y="132" fill="#d29922">[FLAG] disk &gt;=85%: /dev/sda1  100G  90G  10G  90% /</text>
+    <text x="24" y="158" fill="#3fb950">[ok]   memory ~20% used (estimate)</text>
+    <text x="24" y="184" fill="#3fb950">[ok]   no non-passing Consul service checks</text>
+    <text x="24" y="232" fill="#f85149">VERDICT: 1 flag raised. Confirm source evidence before escalation.</text>
+  </g>
+</svg>
