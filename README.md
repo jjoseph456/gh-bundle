@@ -1,5 +1,7 @@
 # gh-bundle
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A `gh` CLI extension that does a fast, read-only **first-look triage** of a
 GitHub Enterprise Server (GHES) support bundle.
 
