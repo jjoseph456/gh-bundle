@@ -71,7 +71,7 @@ fi
 
 # ---- selective extraction (don't unpack gigabytes; pull only what we read) --
 # Relative paths (per node) this tool actually opens:
-WANT_RE='(^|/)metadata/(diagnostics\.txt|system\.json|services_consul_status\.json)$|(^|/)system-logs/kern\.log$|(^|/)github-logs/(exceptions|production)\.log$|(^|/)docker/container-logs/|(^|/)ghe-probe/ghe-probe-.*\.md$|(^|/)cluster_status\.json$'
+WANT_RE='(^|/)metadata/(diagnostics\.txt|system\.json|services_consul_status\.json)$|(^|/)system-logs/kern\.log$|(^|/)github-logs/(exceptions|production)\.log$|(^|/)docker/container-logs/|(^|/)cluster_status\.json$'
 
 if [ -d "$SRC" ]; then
   ROOT="$SRC"
@@ -257,9 +257,6 @@ for NODE in "${NODES[@]}"; do
     fi
   fi
 
-  # --- ghe-probe automated findings ---
-  probe="$(find "$NODE/ghe-probe" -maxdepth 1 -name 'ghe-probe-*.md' 2>/dev/null | head -1)"
-  [ -n "$probe" ] && emit note ghe-probe "ghe-probe findings present (read this — automated analysis)" "${probe#$ROOT/}"
 done
 
 # ---- verdict --------------------------------------------------------------
