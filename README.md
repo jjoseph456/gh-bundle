@@ -20,7 +20,6 @@ appliance underneath them, or cut off from GitHub.com by a corporate proxy.
 - **The air-gapped / proxy reality check**: TLS / proxy / GitHub Connect /
   advisory-sync errors in `github-logs/exceptions.log` and `production.log`
   (the usual reason Dependabot "stops working" on GHES is the network, not the engine).
-- **ghe-probe** automated findings, if the bundle carried them.
 
 It is **topology-aware** (handles single-node and multi-node/cluster bundles)
 and **defensive**: it never assumes a file exists, one corrupt node never aborts
@@ -105,7 +104,6 @@ single-node, `<hostname>/metadata/...` for multi-node):
 - `system-logs/kern.log` — OOM killer
 - `docker/container-logs/*` — container OOM
 - `github-logs/exceptions.log`, `github-logs/production.log` — TLS/proxy/Connect
-- `ghe-probe/ghe-probe-*.md` — automated findings (flagged for you to read)
 
 Bundle layout handling uses defensive path discovery for both single-node and
 multi-node archives. Missing or malformed diagnostic files are reported or
